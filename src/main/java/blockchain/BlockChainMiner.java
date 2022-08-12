@@ -55,11 +55,28 @@ public class BlockChainMiner {
 			System.out.println("Time taken " + (end - start) + " ms.");
 		}
 	}
-	
+
+	public void mineAnIndependentBlock(){
+		Block block = BlocksData.getNextBlock(7, "123456");
+
+		CompletionStage<HashResult> results = AskPattern.ask(actorSystem,
+				me -> new ManagerBehavior.MineBlockCommand(block, me, 5),
+				Duration.ofSeconds(30),
+				actorSystem.scheduler());
+
+		results.whenComplete((reply, failure) -> {
+			if (reply == null){
+				System.out.println("Error: hash not found");
+			} else {
+				System.out.println("Everything ok");
+			}
+		});
+	}
+
 	public void mineBlocks() {
-		
-		actorSystem = ActorSystem.create(ManagerBehavior.create(), "BlockChainMiner");
+		actorSystem = ActorSystem.create(MiningSystemBehavior.create(), "BlockChainMiner");
 		mineNextBlock();
+		mineAnIndependentBlock();
 	}
 	
 }

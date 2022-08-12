@@ -4,10 +4,7 @@ import akka.actor.typed.ActorRef;
 import akka.actor.typed.Behavior;
 import akka.actor.typed.SupervisorStrategy;
 import akka.actor.typed.Terminated;
-import akka.actor.typed.javadsl.AbstractBehavior;
-import akka.actor.typed.javadsl.ActorContext;
-import akka.actor.typed.javadsl.Behaviors;
-import akka.actor.typed.javadsl.Receive;
+import akka.actor.typed.javadsl.*;
 import model.Block;
 import model.HashResult;
 
@@ -76,21 +73,27 @@ public class ManagerBehavior extends AbstractBehavior<ManagerBehavior.Command> {
         }
     }
 
-    private ManagerBehavior(ActorContext<Command> context) {
+    private final StashBuffer<Command> stashBuffer;
+
+    private ManagerBehavior(ActorContext<Command> context, StashBuffer<Command> stashBuffer) {
         super(context);
+        this.stashBuffer = stashBuffer;
     }
 
     public static Behavior<Command> create() {
-        return Behaviors.setup(ManagerBehavior::new);
+        return Behaviors.withStash(10,
+                stash -> Behaviors.setup(
+                        context -> new ManagerBehavior(context, stash)));
     }
 
     @Override
     public Receive<Command> createReceive() {
+        return idleMessageHandler();
+    }
+
+    public Receive<Command> idleMessageHandler() {
         return newReceiveBuilder()
-                .onSignal(Terminated.class, handler -> {
-                    startNextWorker();
-                    return Behaviors.same();
-                })
+                .onSignal(Terminated.class, handler -> Behaviors.same())
                 .onMessage(MineBlockCommand.class, message -> {
                     this.sender = message.getSender();
                     this.block = message.getBlock();
@@ -99,12 +102,29 @@ public class ManagerBehavior extends AbstractBehavior<ManagerBehavior.Command> {
                     for (int i = 0; i < 10; i++) {
                         startNextWorker();
                     }
+                    return activeMessageHandler();
+                })
+                .build();
+    }
+
+    public Receive<Command> activeMessageHandler() {
+        return newReceiveBuilder()
+                .onSignal(Terminated.class, handler -> {
+                    startNextWorker();
                     return Behaviors.same();
                 })
                 .onMessage(HashResultCommand.class, message -> {
                     this.mining = false;
                     getContext().getChildren().forEach(child -> getContext().stop(child));
                     sender.tell(message.getHashResult());
+                    return stashBuffer.unstashAll(idleMessageHandler());
+                })
+                .onMessage(MineBlockCommand.class, message -> {
+                    System.out.println("Delaying mining request");
+                    //getContext().getSelf().tell(message);
+                    if (!stashBuffer.isFull()){
+                        stashBuffer.stash(message);
+                    }
                     return Behaviors.same();
                 })
                 .build();
